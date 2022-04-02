@@ -4,7 +4,7 @@ import time
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import statistics as stat
-#import xlsxwriter
+import xlsxwriter
 import math
 import numpy as np
 from matplotlib import interactive
@@ -15,15 +15,18 @@ from sklearn.tree import DecisionTreeRegressor
 from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
 from sklearn import svm
 from sklearn import preprocessing
+from sklearn.pipeline import make_pipeline
 import sklearn.linear_model
 import os
 import pickle
+from sklearn.ensemble import VotingRegressor
+from sklearn.preprocessing import OneHotEncoder
 
 try: # Normal offline run
     data = pd.read_excel(r'C:\Users\Yiannis\python\pv\CorrectedDataNew.xlsx',sheet_name="Data")
     buildingdata = data.values.tolist()
 except: # For Colab 
-    data = pd.read_excel(r'/content/drive/MyDrive/Colab Notebooks/CorrectedDataNew.xlsx.xlsx',sheet_name="Data")
+    data = pd.read_excel(r'/content/drive/MyDrive/Colab Notebooks/CorrectedDataNew.xlsx',sheet_name="Data")
     buildingdata = data.values.tolist()
 '''
 a = []
@@ -210,9 +213,9 @@ for i in range(len(buildingdata)):
 
 
 
-# Calculate statistics
+# Calculate statistics # not needed for machine learning tests
 
-
+'''
 # Hourly stats for PV production
 pvhmeansyearly = hourlymeans(pvhourly) # Hourly mean production for the whole year
 pvhstdevyearly = standarddeviation(pvhourly) # Hourly deviation of production for the whole year
@@ -232,7 +235,7 @@ blegend = (hourlystatslabel,
            'pvhmeanswinter: Hourly mean production for winter months',
            'pvhstdevwinter: Hourly deviation of production for winter months')
 
-
+'''
 
 datesinstring = []
 day = []
@@ -250,30 +253,44 @@ wvalues4cloud = []
 wvalues5rad = []
 wvalues5rad_previoushour = []
 wvalues5rad_preprevioushour = []
+wvalues5rad_3hoursbefore = []
+wvalues5rad_4hoursbefore = []
+wvalues5rad_5hoursbefore = []
 for i in range(len(pvhourly)): # Check if dates match and prepare the lists for each value
     try: # Will raise an error when trying the time when DST starts, ignore that value -will omit a (erroneous) value of the original index
         wvalues2humid.append(buildingdata[i][8]) 
         wvalues3wind.append(buildingdata[i][9])
         wvalues4cloud.append(buildingdata[i][10])
         wvalues5rad.append(buildingdata[i][11])
-        if i > 2:
+        if i > 5:
             wvalues5rad_previoushour.append(wvalues5rad[i-1])
             wvalues5rad_preprevioushour.append(wvalues5rad[i-2])
+            wvalues5rad_3hoursbefore.append(wvalues5rad[i-3])
+            wvalues5rad_4hoursbefore.append(wvalues5rad[i-4])
+            wvalues5rad_5hoursbefore.append(wvalues5rad[i-5])
         else:
             wvalues5rad_previoushour.append(wvalues5rad[i])
-            wvalues5rad_preprevioushour.append(wvalues5rad[i]) 
+            wvalues5rad_preprevioushour.append(wvalues5rad[i])
+            wvalues5rad_3hoursbefore.append(wvalues5rad[i])
+            wvalues5rad_4hoursbefore.append(wvalues5rad[i])
+            wvalues5rad_5hoursbefore.append(wvalues5rad[i])
         datesinstring.append(time.strftime('%Y-%m-%d %H:%M:%S', pvhourly[i][0]))
         day.append(time.strftime('%d', pvhourly[i][0]))
         month.append(time.strftime('%m', pvhourly[i][0]))
+        
+        currentmonth = int(time.strftime('%m', pvhourly[i][0]))
         # Season
-        if 3 > int(time.strftime('%m', pvhourly[i][0])) >= 6:
-            season.append(2) #Spring
-        elif 6 > int(time.strftime('%m', pvhourly[i][0])) >= 9:
-            season.append(1) #Summer
-        elif 9 > int(time.strftime('%m', pvhourly[i][0])) >= 12:
-            season.append(3) #Autumn
+        if 3 < currentmonth and currentmonth <= 6:
+            season.append('Spring') #Spring
+        elif 6 < currentmonth and currentmonth <= 9:
+            season.append('Summer') #Summer
+        elif 9 < currentmonth and currentmonth <= 12:
+            season.append('Autumn') #Autumn
+        elif 0 < currentmonth and currentmonth <= 3:
+            season.append('Winter') #Winter
         else:
-            season.append(4) #Winter
+            print("error")
+            
         year.append(time.strftime('%Y', pvhourly[i][0]))
         hour.append(time.strftime('%H', pvhourly[i][0]))
         weekday.append(time.strftime('%w', pvhourly[i][0])) # Weekday needs to be taken into account for consumption - it is not exported to excel
@@ -282,9 +299,57 @@ for i in range(len(pvhourly)): # Check if dates match and prepare the lists for 
         wvalues1temp.append(buildingdata[i][7])
 
     except:
-        pass
+        print('error')
 
-#print("Humidity/Consumption",np.corrcoef(wvalues2humid,bvalues)[0, 1]) #Test correlation
+encmonth = OneHotEncoder(categories='auto',handle_unknown='ignore')
+enchour = OneHotEncoder(categories='auto',handle_unknown='ignore')
+encseason = OneHotEncoder(categories='auto',handle_unknown='ignore')
+
+month_cat = encmonth.fit_transform(np.array(month).reshape(-1, 1))
+month_cat = month_cat.toarray()
+hour_cat = enchour.fit_transform(np.array(hour).reshape(-1, 1))
+hour_cat = hour_cat.toarray()
+season_cat = encseason.fit_transform(np.array(season).reshape(-1, 1))
+season_cat = season_cat.toarray()
+
+s1 = pd.Series(datesinstring, name='Date/Time')
+s2 = pd.Series(day, name='Day')
+s3 = pd.Series(month, name='Month')
+#s3_ohe = pd.Series(month_cat, name='Month')
+s4 = pd.Series(year, name='Year')
+s5 = pd.Series(hour, name='Hour')
+s7 = pd.Series(pvvalues, name='pvvalues')
+s8 = pd.Series(wvalues1temp, name='air temperature [Β°C]')
+s9 = pd.Series(wvalues2humid, name='relative humidity [%]')
+s10 = pd.Series(wvalues3wind, name='wind speed[m/s]')
+s11 = pd.Series(wvalues4cloud, name='cloudcover [%]')
+s12 = pd.Series(wvalues5rad, name='global radiation [W/m^2]')
+s12_1 = pd.Series(wvalues5rad_previoushour, name='rvalues2')
+s12_2 = pd.Series(wvalues5rad_preprevioushour, name='rvalues3')
+s12_3 = pd.Series(wvalues5rad_3hoursbefore, name='rvalues4')
+s13 = pd.Series(season, name='Season')
+df = pd.DataFrame({
+                    'rvalues2':wvalues5rad_previoushour,'rvalues3':wvalues5rad_preprevioushour,
+                    'rvalues4':wvalues5rad_3hoursbefore,'globalradiation':wvalues5rad, 'hour':hour }
+                )
+#df[encmonth.categories_[0]]= month_cat # Use month as a categorical feature
+#df[enchour.categories_[0]]= hour_cat # Use hour as a categorical feature
+#df[encseason.categories_[0]]= season_cat # Use season as a categorical feature
+
+df2 = pd.DataFrame(pvvalues)
+df_time = pd.DataFrame(datesinstring)
+test_set_index = 168
+train_setx = df.iloc[:len(wvalues1temp)-test_set_index,:]
+test_setx = df.iloc[len(wvalues1temp)-test_set_index:,:]
+train_sety = df2.iloc[:len(wvalues1temp)-test_set_index,:]
+test_sety = df2.iloc[len(wvalues1temp)-test_set_index:,:]
+train_time = df_time.iloc[:len(wvalues1temp)-test_set_index,:]
+test_time = df_time.iloc[len(wvalues1temp)-test_set_index:,:]
+
+train_setx= train_setx.to_numpy()
+test_setx = test_setx.to_numpy()
+#plots not used for machine learning tests
+'''
 
 plt.figure(2)
 bplot(pvhourly,'production') # Plot historical energy production
@@ -305,29 +370,28 @@ try:
 except: # Normal syntax is not compatible with colab, an exception is raised and I resolve it by writing the colab comatible syntax
     seasonalpv = stm.tsa.seasonal.seasonal_decompose(pvvalues, freq=24*30) # Monthly intervals
     statsmodels.tsa.seasonal.DecomposeResult.plot(seasonalpv)
+'''
 
-
-# Decision tree Regressor - Predict values
-regr_1 = DecisionTreeRegressor(criterion='squared_error', random_state = 0, max_depth = 15, min_samples_split=4, min_samples_leaf=1) # If max_depth is too low it won't take into account all the input features
 weather_regr = []
-train_setx = [] # The Train set is all the data except the last week
+
+#train_setx = [] # The Train set is all the data except the last week
 train_sety = []
-test_setx = [] # The Test set is the last week of the data
+#test_setx = [] # The Test set is the last week of the data
 test_sety = []
 train_time = []
 test_time = []
 #print(np.corrcoef(season,pvvalues)[0, 1])
 for i in range(len(wvalues1temp)): # Prepare to calculate data using multiple weather variables
-    if i < len(wvalues1temp)-168:
+    if i < len(wvalues1temp)-test_set_index:
         #train_setx.append([wvalues5rad[i],hour[i],month[i],season[i],wvalues5rad[i-168],wvalues5rad[i-336]])
        #train_setx.append([wvalues5rad[i],hour[i],month[i],season[i]])
         #train_setx.append([wvalues5rad[i],hour[i],month[i],season[i],wvalues5rad_previoushour[i],wvalues2humid[i],wvalues3wind[i]])
-        train_setx.append([wvalues5rad[i],wvalues1temp[i]])
-        #train_setx.append([wvalues5rad[i],hour[i],month[i],season[i],wvalues5rad_previoushour[i]])
+       # train_setx.append([wvalues5rad[i],wvalues5rad_previoushour[i],wvalues5rad_preprevioushour[i],wvalues5rad_3hoursbefore[i]])
+        #train_setx.append([wvalues5rad[i],hour[i],month[i],season[i],wvalues5rad_previoushour[i]]) 
         train_sety.append(pvvalues[i])
         train_time.append(datesinstring[i])
     else:
-        test_setx.append([wvalues5rad[i],wvalues1temp[i]])
+       # test_setx.append([wvalues5rad[i],wvalues5rad_previoushour[i],wvalues5rad_preprevioushour[i],wvalues5rad_3hoursbefore[i]])
 #        test_setx.append([wvalues5rad[i],hour[i],month[i],season[i],wvalues5rad_previoushour[i],wvalues2humid[i],wvalues3wind[i]])
 
         #test_setx.append([wvalues5rad[i],hour[i],month[i],season[i],wvalues5rad_previoushour[i]])
@@ -335,10 +399,14 @@ for i in range(len(wvalues1temp)): # Prepare to calculate data using multiple we
         test_time.append(datesinstring[i])
 
 
+# Decision tree Regressor - Predict values
+regr_1 = DecisionTreeRegressor(criterion='squared_error', random_state = 0, max_depth = 22, min_samples_split=4, min_samples_leaf=20) # If max_depth is too low it won't take into account all the input features
+
 #regr_1.fit(np.array(wvalues5rad).reshape(-1, 1), np.array(pvvalues).reshape(-1, 1))
 regr_1.fit(train_setx, train_sety)
 
 y_1 = regr_1.predict(test_setx)
+
 
 plt.figure()
 plt.title("Decision Tree: Prediction vs real values to PV production")
@@ -375,22 +443,28 @@ plt.plot(test_setx, y_2, color="cornflowerblue", label="predicted", linewidth=2)
 '''
 print("Decision Tree Method:")
 display_ml_error_indicators(test_sety,y_1)
-#rscore = regr_1.score(test_setx, test_sety)
-#print("R-squared:", rscore) # R-Squared
+rscore = regr_1.score(test_setx, test_sety)
+print("R-squared:", rscore) # R-Squared
 
-regr_2 = svm.SVR()
+
+#regr_2 = svm.SVR()
 sc_x = preprocessing.StandardScaler()
 #train_setx_norm = preprocessing.normalize(train_setx)
 #test_setx_norm = preprocessing.normalize(test_setx)
 train_setx_norm = sc_x.fit_transform(train_setx)
 test_setx_norm = sc_x.fit_transform(test_setx)
 
-regr_2.fit(train_setx_norm, train_sety)
-y_2 =  regr_2.predict(test_setx_norm)
+#regr_2.fit(train_setx_norm, train_sety)
+#y_2 =  regr_2.predict(test_setx_norm)
+
+
+regr_2 = make_pipeline(preprocessing.StandardScaler(), svm.SVR(kernel='linear',C=30.0, epsilon=0.2))
+regr_2.fit(train_setx, train_sety)
+y_2 =  regr_2.predict(test_setx)
 
 print("SVR:")
 display_ml_error_indicators(test_sety,y_2)
-rscore = regr_2.score(test_setx_norm, test_sety)
+rscore = regr_2.score(test_setx, test_sety)
 print("R-squared:", rscore) # R-Squared
 
 
@@ -417,6 +491,40 @@ plt.title("Linear Regression: Prediction vs real values to PV production")
 plt.plot(test_time, test_sety, color="darkorange", label="real values", linewidth=2)
 plt.plot(test_time, y_3, color="cornflowerblue", label="predicted", linewidth=2)
 
+# Ensemble of Linear regression and SVR
+print("Ensemble of Linear regression and SVR:")
+weights = [0.5, 0.5]
+models = []
+models.append(('r1',regr_2))
+models.append(('r2',regr_3))
+ensemble = VotingRegressor(estimators=models, weights=weights)
+ensemble.fit(train_setx, train_sety)
+
+y_4 = ensemble.predict(test_setx)
+display_ml_error_indicators(test_sety,y_4)
+
+print("R-squared:", ensemble.score(test_setx_norm, test_sety))
+
+print("Ensemble of Decision tree and SVR:")
+weights = [0.5, 0.5]
+models = []
+models.append(('r1',regr_2))
+models.append(('r2',regr_1))
+ensemble = VotingRegressor(estimators=models, weights=weights)
+ensemble.fit(train_setx, train_sety)
+
+y_5 = ensemble.predict(test_setx)
+display_ml_error_indicators(test_sety,y_5)
+
+print("R-squared:", ensemble.score(test_setx_norm, test_sety))
+
+plt.figure()
+plt.title("Ensemble: Prediction vs real values to PV production")
+plt.plot(test_time, test_sety, color="darkorange", label="real values", linewidth=2)
+plt.plot(test_time, y_5, color="cornflowerblue", label="predicted", linewidth=2)
+
+
+
 ''' # Testing the DataFrame.corr function - not needed
 # Dataframe Correlation
 testdataframe = pd.DataFrame({'wvalues5rad':wvalues5rad,'pvvalues':pvvalues})
@@ -431,7 +539,8 @@ plt.show()
 filename = 'adegapalmela_temp_solar.sav'
 pickle.dump(regr_1, open(filename, 'wb'))
 
-
+#disabled for machine learning tests
+'''
 # Export Correlation Data
 
 s1 = pd.Series(np.corrcoef(wvalues1temp,pvvalues)[0, 1],name='Temperature-PV Production Correlation')
@@ -453,24 +562,13 @@ exporthourlystats = pd.DataFrame({
 
 exportdatalegend = pd.DataFrame({'Legend':blegend}) # Legend explaining the statistics page
 
-
+'''
 
 
 # Export Arranged Data
 
-s1 = pd.Series(datesinstring, name='Date/Time')
-s2 = pd.Series(day, name='Day')
-s3 = pd.Series(month, name='Month')
-s4 = pd.Series(year, name='Year')
-s5 = pd.Series(hour, name='Hour')
-s7 = pd.Series(pvvalues, name='pvvalues')
-s8 = pd.Series(wvalues1temp, name='air temperature [Β°C]')
-s9 = pd.Series(wvalues2humid, name='relative humidity [%]')
-s10 = pd.Series(wvalues3wind, name='wind speed[m/s]')
-s11 = pd.Series(wvalues4cloud, name='cloudcover [%]')
-s12 = pd.Series(wvalues5rad, name='global radiation [W/m^2]')
 
-exportbdata = pd.concat([s1,s2,s3,s4,s5,s7,s8,s9,s10,s11,s12], axis=1) # Must be written like this to allow different size lists in the same worksheet
+exportbdata = pd.concat([s1,s2,s3,s4,s5,s7,s8,s9,s10,s11,s12,s13], axis=1) # Must be written like this to allow different size lists in the same worksheet
 
 
 # Create a Pandas Excel writer using XlsxWriter as the engine.
@@ -478,13 +576,16 @@ try:
     bwriter = pd.ExcelWriter('Exported_Data.xlsx', engine='xlsxwriter')
 except:
     # Colab version
-    bwriter = pd.ExcelWriter('/content/ExportedData.xlsx', engine='xlsxwriter')
+    bwriter = pd.ExcelWriter('/content/drive/MyDrive/Colab Notebooks/ExportedData.xlsx', engine='xlsxwriter')
 
 # Saving the Excel file
 exportbdata.to_excel(bwriter, sheet_name='Data')
+
+''' disabled for machine learning tests
 exportcorrdata.to_excel(bwriter, sheet_name='Correlation Data')
 exporthourlystats.to_excel(bwriter, sheet_name='Hourly statistics')
 exportdatalegend.to_excel(bwriter, sheet_name='Legend')
+'''
 
 bwriter.save()
 
