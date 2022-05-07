@@ -16,25 +16,21 @@ from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
 from sklearn import svm
 from sklearn import preprocessing
 from sklearn.pipeline import make_pipeline
+from sklearn.pipeline import Pipeline
 import sklearn.linear_model
 import os
 import pickle
 from sklearn.ensemble import VotingRegressor
 from sklearn.preprocessing import OneHotEncoder
+from sklearn.model_selection import GridSearchCV
 
-try: # Normal offline run
-    data = pd.read_excel(r'C:\Users\Yiannis\python\pv\CorrectedDataNew.xlsx',sheet_name="Data")
+try: # For offline execution
+    data = pd.read_excel(r'C:\python\CorrectedDataNew.xlsx',sheet_name="Data")
     buildingdata = data.values.tolist()
-except: # For Colab 
+except: # For Google Colab 
     data = pd.read_excel(r'/content/drive/MyDrive/Colab Notebooks/CorrectedDataNew.xlsx',sheet_name="Data")
     buildingdata = data.values.tolist()
-'''
-a = []
-for i in range(500):
-    a.append(buildingdata[i])
 
-buildingdata = a
-'''
 #Fix outliers
 def fixoutliers(buildingdata):
 	bq99 = []
@@ -46,8 +42,6 @@ def fixoutliers(buildingdata):
 		if buildingdata[i][6] > q99:
 			buildingdata[i][6] = q99
 	return buildingdata		
-
-
 
 def datetotimestamp(buildingdata):# Convert date columns into timestamp
     btime = [] # List of timestamps
@@ -65,9 +59,6 @@ def wdatetotimestamp(buildingdata):# Convert date column into timestamp
         btimestring = buildingdata[i][1] + "+01:00"
         btime.append(datetime.datetime.strptime(btimestring,"%Y-%m-%d %H:%M:%S%z").timetuple())
     return btime
-
-
-
 
 def testmissingdata(bhour): #Print all values which do not follow hourly sequence - Should only print DST changes in March if all is OK
     bhournew = []
@@ -87,14 +78,8 @@ def bplot(bhour,title="empty"): #Plot the data
     for i in range(len(bhour)):  
         plotpvx.append(mdates.date2num(datetime.datetime.utcfromtimestamp(bhourly1[i])))# Convert timestamp to a format matplotlib can handle
         plotpvy.append(bhour[i][1])
-
-
-    #plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%d/%m/%Y'))
-    #plt.gca().xaxis.set_major_locator(mdates.DayLocator())
-    #plt.gcf().autofmt_xdate()
     plt.title(title)
-    #plt.figure()
-    plt.plot(plotpvy) #Needs two arrays, cannot handle a list of lists as input
+    plt.plot(plotpvy)
     
 
 def hourlymeans(bhourly, season='Yearly'): # Calculate hourly means
@@ -154,69 +139,23 @@ def standarddeviation(bhourly, season='Yearly'): # Calculate hourly standard dev
     return std
 
 def display_ml_error_indicators(test_sety,predicted_y):
-#    mse = mean_squared_error(test_sety,predicted_y)
-#    print("RMSE: ", mse**(1/2.0)) # Mean Squared Error - The criterion for which Regression is done by default
-    print("RMSE", format(mean_squared_error(predicted_y, test_sety, squared=False), ".3f"))
-    
-#    mae = mean_absolute_error(test_sety, predicted_y)
-#    print("MAE: ", mae) # Mean Absolute Error
-    
-    print("MAE", format(mean_absolute_error(predicted_y, test_sety), ".3f"))
-
+    print("RMSE", format(mean_squared_error(predicted_y, test_sety, squared=False), ".0f"))    
+    print("MAE", format(mean_absolute_error(predicted_y, test_sety), ".0f"))
     print("r_square", format(r2_score(predicted_y, test_sety), ".3f"))
-    '''
-    #smape
-    def smape(A, F):
-        return 100/len(A) * np.sum(2 * np.abs(F - A) / (np.abs(A) + np.abs(F)))
-    testy = []
-    predy = []
-    #mape cannot be calculated because of divide by zero error unless zero values are omitted
-
-    for i in range(len(test_sety)):
-        if test_sety[i] != 0 and predicted_y[i] != 0:
-            testy.append(test_sety[i])
-            predy.append(predicted_y[i])
- 
-    testy = np.array(testy).reshape(-1, 1)
-    predy = np.array(predy).reshape(-1, 1)
-    #testy[testy == 0] = 1
-    #predy[predy == 0] = 1
-    
-    
-    smape1 = smape(testy,predy)
-    print("sMAPE:",smape1)
    
 
-    def mean_absolute_percentage_error(y_true, y_pred): 
-        #y_true, y_pred = np.array(y_true), np.array(y_pred)
-        return np.mean(np.abs((y_true - y_pred) / y_true)) * 100
-
-    mape = mean_absolute_percentage_error(testy, predy)
-    print("MAPE:",mape)
-    '''
-    
-
+#Trim production values over 99% of the rest of the data - not used
+#buildingdata = fixoutliers(buildingdata)
 
 pvhourly = []
 weatherdata = []
-
-#Trim production values over 99% of the rest of the data
-#buildingdata = fixoutliers(buildingdata)
-
-# Data 
-hourlystatslabel = 'Hourly Statistics'
 btime = wdatetotimestamp(buildingdata)
 
-for i in range(len(buildingdata)):
+for i in range(len(buildingdata)): # Create a list containting the timestamp and production for each hour
     pvhourly.append([btime[i],buildingdata[i][6]])
 
-
-
-
-# Calculate statistics # not needed for machine learning tests
-
-'''
-# Hourly stats for PV production
+# Hourly statistics for PV production
+hourlystatslabel = 'Hourly Statistics'
 pvhmeansyearly = hourlymeans(pvhourly) # Hourly mean production for the whole year
 pvhstdevyearly = standarddeviation(pvhourly) # Hourly deviation of production for the whole year
 
@@ -235,7 +174,7 @@ blegend = (hourlystatslabel,
            'pvhmeanswinter: Hourly mean production for winter months',
            'pvhstdevwinter: Hourly deviation of production for winter months')
 
-'''
+
 
 datesinstring = []
 day = []
@@ -256,24 +195,27 @@ wvalues5rad_preprevioushour = []
 wvalues5rad_3hoursbefore = []
 wvalues5rad_4hoursbefore = []
 wvalues5rad_5hoursbefore = []
+wvalues5rad_6hoursbefore = []
 for i in range(len(pvhourly)): # Check if dates match and prepare the lists for each value
-    try: # Will raise an error when trying the time when DST starts, ignore that value -will omit a (erroneous) value of the original index
+    try:
         wvalues2humid.append(buildingdata[i][8]) 
         wvalues3wind.append(buildingdata[i][9])
         wvalues4cloud.append(buildingdata[i][10])
         wvalues5rad.append(buildingdata[i][11])
-        if i > 5:
+        if i > 6:
             wvalues5rad_previoushour.append(wvalues5rad[i-1])
             wvalues5rad_preprevioushour.append(wvalues5rad[i-2])
             wvalues5rad_3hoursbefore.append(wvalues5rad[i-3])
             wvalues5rad_4hoursbefore.append(wvalues5rad[i-4])
             wvalues5rad_5hoursbefore.append(wvalues5rad[i-5])
+            wvalues5rad_6hoursbefore.append(wvalues5rad[i-6])
         else:
             wvalues5rad_previoushour.append(wvalues5rad[i])
             wvalues5rad_preprevioushour.append(wvalues5rad[i])
             wvalues5rad_3hoursbefore.append(wvalues5rad[i])
             wvalues5rad_4hoursbefore.append(wvalues5rad[i])
             wvalues5rad_5hoursbefore.append(wvalues5rad[i])
+            wvalues5rad_6hoursbefore.append(wvalues5rad[i])
         datesinstring.append(time.strftime('%Y-%m-%d %H:%M:%S', pvhourly[i][0]))
         day.append(time.strftime('%d', pvhourly[i][0]))
         month.append(time.strftime('%m', pvhourly[i][0]))
@@ -293,7 +235,7 @@ for i in range(len(pvhourly)): # Check if dates match and prepare the lists for 
             
         year.append(time.strftime('%Y', pvhourly[i][0]))
         hour.append(time.strftime('%H', pvhourly[i][0]))
-        weekday.append(time.strftime('%w', pvhourly[i][0])) # Weekday needs to be taken into account for consumption - it is not exported to excel
+        weekday.append(time.strftime('%w', pvhourly[i][0]))
         pvvalues.append(pvhourly[i][1])
             
         wvalues1temp.append(buildingdata[i][7])
@@ -315,7 +257,6 @@ season_cat = season_cat.toarray()
 s1 = pd.Series(datesinstring, name='Date/Time')
 s2 = pd.Series(day, name='Day')
 s3 = pd.Series(month, name='Month')
-#s3_ohe = pd.Series(month_cat, name='Month')
 s4 = pd.Series(year, name='Year')
 s5 = pd.Series(hour, name='Hour')
 s7 = pd.Series(pvvalues, name='pvvalues')
@@ -328,17 +269,39 @@ s12_1 = pd.Series(wvalues5rad_previoushour, name='rvalues2')
 s12_2 = pd.Series(wvalues5rad_preprevioushour, name='rvalues3')
 s12_3 = pd.Series(wvalues5rad_3hoursbefore, name='rvalues4')
 s13 = pd.Series(season, name='Season')
+#Different input sets of numerical features - the sets not used in the current test are commented out
+'''df = pd.DataFrame({
+                    'rvalues2':wvalues5rad_previoushour,'rvalues3':wvalues5rad_preprevioushour,
+                    'rvalues4':wvalues5rad_3hoursbefore,'h':hour,'globalradiation':wvalues5rad
+                    }
+                )'''
 df = pd.DataFrame({
                     'rvalues2':wvalues5rad_previoushour,'rvalues3':wvalues5rad_preprevioushour,
-                    'rvalues4':wvalues5rad_3hoursbefore,'globalradiation':wvalues5rad, 'hour':hour }
+                    'rvalues4':wvalues5rad_3hoursbefore,'rvalues5':wvalues5rad_4hoursbefore,'globalradiation':wvalues5rad
+                    }
                 )
+'''df = pd.DataFrame({
+                    'rvalues2':wvalues5rad_previoushour,'rvalues3':wvalues5rad_preprevioushour,
+                    'rvalues4':wvalues5rad_3hoursbefore,'globalradiation':wvalues5rad
+                    }
+                )'''
+'''df = pd.DataFrame({
+                    'rvalues2':wvalues5rad_previoushour,'rvalues3':wvalues5rad_preprevioushour,
+                    'rvalues4':wvalues5rad_3hoursbefore,'globalradiation':wvalues5rad,
+                    'rvalues5':wvalues5rad_4hoursbefore,'rvalues6':wvalues5rad_5hoursbefore
+                    }
+                )'''
+
+# Categorical input features - the variables not used in the current test are commented out
 #df[encmonth.categories_[0]]= month_cat # Use month as a categorical feature
 #df[enchour.categories_[0]]= hour_cat # Use hour as a categorical feature
 #df[encseason.categories_[0]]= season_cat # Use season as a categorical feature
 
 df2 = pd.DataFrame(pvvalues)
 df_time = pd.DataFrame(datesinstring)
-test_set_index = 168
+
+test_set_index = int(len(wvalues1temp)*0.5) # The size of the test set - set to 50% of the dataset
+
 train_setx = df.iloc[:len(wvalues1temp)-test_set_index,:]
 test_setx = df.iloc[len(wvalues1temp)-test_set_index:,:]
 train_sety = df2.iloc[:len(wvalues1temp)-test_set_index,:]
@@ -348,9 +311,8 @@ test_time = df_time.iloc[len(wvalues1temp)-test_set_index:,:]
 
 train_setx= train_setx.to_numpy()
 test_setx = test_setx.to_numpy()
-#plots not used for machine learning tests
-'''
 
+#Plots for statistics - not used for machine learning tests
 plt.figure(2)
 bplot(pvhourly,'production') # Plot historical energy production
 plt.show
@@ -370,39 +332,31 @@ try:
 except: # Normal syntax is not compatible with colab, an exception is raised and I resolve it by writing the colab comatible syntax
     seasonalpv = stm.tsa.seasonal.seasonal_decompose(pvvalues, freq=24*30) # Monthly intervals
     statsmodels.tsa.seasonal.DecomposeResult.plot(seasonalpv)
-'''
+
 
 weather_regr = []
 
-#train_setx = [] # The Train set is all the data except the last week
+# Prepare the lists of the output data and timestamps for machine learning
 train_sety = []
-#test_setx = [] # The Test set is the last week of the data
 test_sety = []
 train_time = []
 test_time = []
-#print(np.corrcoef(season,pvvalues)[0, 1])
-for i in range(len(wvalues1temp)): # Prepare to calculate data using multiple weather variables
+for i in range(len(wvalues1temp)): 
     if i < len(wvalues1temp)-test_set_index:
-        #train_setx.append([wvalues5rad[i],hour[i],month[i],season[i],wvalues5rad[i-168],wvalues5rad[i-336]])
-       #train_setx.append([wvalues5rad[i],hour[i],month[i],season[i]])
-        #train_setx.append([wvalues5rad[i],hour[i],month[i],season[i],wvalues5rad_previoushour[i],wvalues2humid[i],wvalues3wind[i]])
-       # train_setx.append([wvalues5rad[i],wvalues5rad_previoushour[i],wvalues5rad_preprevioushour[i],wvalues5rad_3hoursbefore[i]])
-        #train_setx.append([wvalues5rad[i],hour[i],month[i],season[i],wvalues5rad_previoushour[i]]) 
         train_sety.append(pvvalues[i])
         train_time.append(datesinstring[i])
     else:
-       # test_setx.append([wvalues5rad[i],wvalues5rad_previoushour[i],wvalues5rad_preprevioushour[i],wvalues5rad_3hoursbefore[i]])
-#        test_setx.append([wvalues5rad[i],hour[i],month[i],season[i],wvalues5rad_previoushour[i],wvalues2humid[i],wvalues3wind[i]])
-
-        #test_setx.append([wvalues5rad[i],hour[i],month[i],season[i],wvalues5rad_previoushour[i]])
         test_sety.append(pvvalues[i])
         test_time.append(datesinstring[i])
 
+sc_x = preprocessing.StandardScaler()
+train_setx_norm = sc_x.fit_transform(train_setx) #Normalized input data
+test_setx_norm = sc_x.fit_transform(test_setx)
 
 # Decision tree Regressor - Predict values
-regr_1 = DecisionTreeRegressor(criterion='squared_error', random_state = 0, max_depth = 22, min_samples_split=4, min_samples_leaf=20) # If max_depth is too low it won't take into account all the input features
+#regr_1 = DecisionTreeRegressor(criterion='squared_error', random_state = 0, max_depth = 22, min_samples_split=4, min_samples_leaf=20) # If max_depth is too low it won't take into account all the input features
+regr_1 = make_pipeline(preprocessing.StandardScaler(), DecisionTreeRegressor(criterion='squared_error', random_state = 0, max_depth = 15, min_samples_split=2, min_samples_leaf=21,splitter='random'))
 
-#regr_1.fit(np.array(wvalues5rad).reshape(-1, 1), np.array(pvvalues).reshape(-1, 1))
 regr_1.fit(train_setx, train_sety)
 
 y_1 = regr_1.predict(test_setx)
@@ -413,59 +367,23 @@ plt.title("Decision Tree: Prediction vs real values to PV production")
 plt.plot(test_time, test_sety, color="darkorange", label="real values", linewidth=2)
 plt.plot(test_time, y_1, color="cornflowerblue", label="max_depth=2", linewidth=2)
 
-
-
-
-
-'''
-# Comparison test single data
-train_setx = [] # Train set is the first 90% of the data
-train_sety = []
-for i in range(int(len(wvalues5rad)*8/10)):
-    train_setx.append(wvalues5rad[i])
-    train_sety.append(pvvalues[i])
-test_setx = [] # Test set is the last 10% of the data
-test_sety = []
-for i in range(len(train_setx),len(wvalues5rad)):
-    test_setx.append(wvalues5rad[i])
-    test_sety.append(pvvalues[i])
-regr_2 = DecisionTreeRegressor(max_depth=3)
-weather_regr2 = []
-regr_2.fit(np.array(train_setx).reshape(-1, 1), train_sety)
-X_test2 = []
-for i in range(100):
-    X_test2.append([i*1])
-y_2 = regr_2.predict(np.array(test_setx).reshape(-1, 1))
-plt.figure()
-plt.title("Prediction vs real values Solar radiation to PV production")
-plt.scatter(np.array(test_setx).reshape(-1, 1), np.array(test_sety).reshape(-1, 1), s=20, edgecolor="black", c="darkorange", label="data")
-plt.plot(test_setx, y_2, color="cornflowerblue", label="predicted", linewidth=2)
-'''
 print("Decision Tree Method:")
 display_ml_error_indicators(test_sety,y_1)
 rscore = regr_1.score(test_setx, test_sety)
-print("R-squared:", rscore) # R-Squared
+print("R-squared:", format(rscore, ".3f")) # R-Squared
 
+# SVM - Predict values
 
-#regr_2 = svm.SVR()
-sc_x = preprocessing.StandardScaler()
-#train_setx_norm = preprocessing.normalize(train_setx)
-#test_setx_norm = preprocessing.normalize(test_setx)
-train_setx_norm = sc_x.fit_transform(train_setx)
-test_setx_norm = sc_x.fit_transform(test_setx)
+regr_2 = make_pipeline(preprocessing.StandardScaler(), svm.SVR(kernel='rbf',C=220000, epsilon=0.2,gamma='auto'))
+#regr_2 = make_pipeline(preprocessing.StandardScaler(), svm.SVR(kernel='linear',C=30, epsilon=0.2,gamma='auto'))
 
-#regr_2.fit(train_setx_norm, train_sety)
-#y_2 =  regr_2.predict(test_setx_norm)
-
-
-regr_2 = make_pipeline(preprocessing.StandardScaler(), svm.SVR(kernel='linear',C=30.0, epsilon=0.2))
 regr_2.fit(train_setx, train_sety)
 y_2 =  regr_2.predict(test_setx)
 
 print("SVR:")
 display_ml_error_indicators(test_sety,y_2)
 rscore = regr_2.score(test_setx, test_sety)
-print("R-squared:", rscore) # R-Squared
+print("R-squared:", format(rscore, ".3f")) # R-Squared
 
 
 plt.figure()
@@ -473,6 +391,7 @@ plt.title("SVR: Prediction vs real values to PV production")
 plt.plot(test_time, test_sety, color="darkorange", label="real values", linewidth=2)
 plt.plot(test_time, y_2, color="cornflowerblue", label="predicted", linewidth=2)
 
+# Linear Regression - Predict values
 
 regr_3 = sklearn.linear_model.LinearRegression().fit(train_setx_norm, train_sety)
 y_3 =  regr_3.predict(test_setx_norm)
@@ -483,13 +402,14 @@ display_ml_error_indicators(test_sety,y_3)
 test_setx_norm = np.array(test_setx_norm, dtype=float) # Need to explicitly convert to numeric or the score function gives a warning
 test_sety = np.array(test_sety, dtype=float)
 rscore = regr_3.score(test_setx_norm, test_sety)
-print("R-squared:", rscore) # R-Squared
+print("R-squared:", format(rscore, ".3f")) # R-Squared
 
 
 plt.figure()
 plt.title("Linear Regression: Prediction vs real values to PV production")
 plt.plot(test_time, test_sety, color="darkorange", label="real values", linewidth=2)
 plt.plot(test_time, y_3, color="cornflowerblue", label="predicted", linewidth=2)
+
 
 # Ensemble of Linear regression and SVR
 print("Ensemble of Linear regression and SVR:")
@@ -503,10 +423,12 @@ ensemble.fit(train_setx, train_sety)
 y_4 = ensemble.predict(test_setx)
 display_ml_error_indicators(test_sety,y_4)
 
-print("R-squared:", ensemble.score(test_setx_norm, test_sety))
+print("R-squared:", format(ensemble.score(test_setx_norm, test_sety), ".3f"))
+
 
 print("Ensemble of Decision tree and SVR:")
-weights = [0.5, 0.5]
+#weights = [0.5, 0.5]
+weights = [0.75, 0.25]
 models = []
 models.append(('r1',regr_2))
 models.append(('r2',regr_1))
@@ -516,7 +438,8 @@ ensemble.fit(train_setx, train_sety)
 y_5 = ensemble.predict(test_setx)
 display_ml_error_indicators(test_sety,y_5)
 
-print("R-squared:", ensemble.score(test_setx_norm, test_sety))
+print("R-squared:", format(ensemble.score(test_setx_norm, test_sety), ".3f"))
+
 
 plt.figure()
 plt.title("Ensemble: Prediction vs real values to PV production")
@@ -524,23 +447,79 @@ plt.plot(test_time, test_sety, color="darkorange", label="real values", linewidt
 plt.plot(test_time, y_5, color="cornflowerblue", label="predicted", linewidth=2)
 
 
+#Grid search
 
-''' # Testing the DataFrame.corr function - not needed
-# Dataframe Correlation
-testdataframe = pd.DataFrame({'wvalues5rad':wvalues5rad,'pvvalues':pvvalues})
-tcorr = testdataframe.corr(method='pearson', min_periods=1)
-print(tcorr)
-plt.figure(10)
-plt.matshow(testdataframe.corr())
-plt.show()
-'''
+# SVR Hyperparameter Tests
+param_grid_svr = {'svr__C': [210000,220000,230000,240000],  
+              'svr__epsilon': [0.2], 
+              'svr__gamma':['auto'],
+              'svr__kernel': ['rbf']}  
+
+grid_svr = Pipeline(steps=[('scaler',preprocessing.StandardScaler()),('svr', svm.SVR())])			  
+
+#Decision Tree Regressor hyperparameter tests
+param_grid_tree = {'tree__criterion':['squared_error', 'friedman_mse', 'absolute_error', 'poisson'],
+                   'tree__splitter':['best', 'random'],
+                   'tree__max_depth': [ 5, 10, 20, 22, 40, 50 ],
+                   'tree__min_samples_split': [ 2, 4, 8 ],
+                   'tree__min_samples_leaf': [1, 10, 20, 40],
+                                  
+                   }
+param_grid_tree1 = {'criterion':['squared_error', 'friedman_mse', 'absolute_error', 'poisson'],
+                   'splitter':['best', 'random'],
+                   'max_depth': [ 5, 10, 20, 22, 40, 50 ],
+                   'min_samples_split': [ 2, 4, 8 ],
+                   'min_samples_leaf': [1, 10, 20, 40],
+                                  
+                   }
+param_grid_tree2 = {'tree__criterion':['squared_error'],
+                   'tree__splitter':['best'],
+                    'tree__random_state':[0],
+                   'tree__max_depth': [ 8, 9, 10,11,12,13, 22, 40, 80, 120 ],
+                   'tree__min_samples_split': [ 4 ],
+                   'tree__min_samples_leaf': [20]
+                                  
+                   }
+param_grid_tree3 = {'random_state':[0],
+                    'criterion':['squared_error', 'friedman_mse'],
+                   'splitter':['best', 'random'],
+                   'max_depth': [ 9 ],
+                   'min_samples_split': [ 2 ],
+                   'min_samples_leaf': [21],
+                                  
+                   }
+extra_tree_features = {
+                       'tree__max_features':['None','auto', 'sqrt', 'log2'],
+                   #'tree__min_impurity_decrease':[0,0.1,0.2,1],
+                   #'tree__ccp_alpha':[0,0.1,0.5,1]
+                       }
+grid_params_voting = { #Tests for Ensemble Models
+               'weights': [(0.625, 0.375),(0.75, 0.25),(0.875, 0.125),(1, 0)]}
+ 
+grid_tree = DecisionTreeRegressor()		  
+#grid_tree = Pipeline(steps=[('scaler',preprocessing.StandardScaler()),('tree', DecisionTreeRegressor())])	
+
+#The selection of the above parameters can be typed here to perform the corresponding test
+grid = GridSearchCV(VotingRegressor(estimators=[('regr2', regr_2),('regr1', regr_1)]), param_grid=grid_params_voting, refit = True, verbose = 3,n_jobs=-1) 
+# Fitting the model for grid search 
+grid.fit(train_setx, train_sety)
+ 
+# Print best parameter after tuning 
+print(grid.best_params_) 
+grid_predictions = grid.predict(test_setx) 
+   
+# print the Score of the best parameters
+print("R-squared:", format(grid.best_score_, ".3f"))
+
+#End of Gridsearch
+
+
 
 # Prediction 1 Model Saving 
 filename = 'adegapalmela_temp_solar.sav'
 pickle.dump(regr_1, open(filename, 'wb'))
 
-#disabled for machine learning tests
-'''
+
 # Export Correlation Data
 
 s1 = pd.Series(np.corrcoef(wvalues1temp,pvvalues)[0, 1],name='Temperature-PV Production Correlation')
@@ -562,7 +541,7 @@ exporthourlystats = pd.DataFrame({
 
 exportdatalegend = pd.DataFrame({'Legend':blegend}) # Legend explaining the statistics page
 
-'''
+
 
 
 # Export Arranged Data
@@ -581,28 +560,12 @@ except:
 # Saving the Excel file
 exportbdata.to_excel(bwriter, sheet_name='Data')
 
-''' disabled for machine learning tests
+
 exportcorrdata.to_excel(bwriter, sheet_name='Correlation Data')
 exporthourlystats.to_excel(bwriter, sheet_name='Hourly statistics')
 exportdatalegend.to_excel(bwriter, sheet_name='Legend')
-'''
+
 
 bwriter.save()
-
-
-
-
-#testmissingdata(bhourly)
-#testmissingdata(pvhourly)
-#testmissingdata(weatherdata)
-#testing
-'''
-test = []
-for i in range(10):
-    test.append(wvalues5rad[i])
-
-print(test)
-print(np.array(test).reshape(-1, 1))
-'''
 
 
